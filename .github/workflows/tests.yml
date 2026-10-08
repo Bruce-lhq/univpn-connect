@@ -1,5 +1,11 @@
 name: Tests
-on: [push, pull_request]
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
 jobs:
   unittest:
     strategy:
@@ -14,3 +20,21 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s tests -v
       - run: python -m univpn_forward --help
+  package:
+    needs: unittest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - run: uv build
+      - name: Verify installed wheel outside source tree
+        run: |
+          uv venv "$RUNNER_TEMP/package-test"
+          uv pip install --python "$RUNNER_TEMP/package-test/bin/python" --no-deps dist/*.whl
+          expected=$(python -m univpn_forward --version)
+          cd "$RUNNER_TEMP"
+          actual=$("$RUNNER_TEMP/package-test/bin/univpn-forward" --version)
+          test "$actual" = "$expected"

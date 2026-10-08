@@ -1,12 +1,21 @@
 # UniVPN TCP Forward
 
+**0.1.0 alpha 1** · Experimental IPv4 TCP forwarding · MIT license
+
 An experimental, standard-library Python forwarder for a UniVPN/Huawei SSL VPN gateway. It exposes **one IPv4 TCP destination** on localhost, so applications such as SSH can reach that destination without a system VPN client or TUN interface.
 
 This is a protocol prototype, not a full VPN or an OpenConnect plugin. Compatibility has been verified against one gateway; other firmware, authentication methods and network conditions need testing. See [validation](docs/validation.md) and [protocol notes](docs/protocol.md).
 
 ## Quick start
 
-Requires Python 3.9 or newer. From this source directory, no installation, third-party Python dependency, administrator privilege or `uv` is required.
+Requires Python 3.9 or newer. Download the source `.tar.gz` from this repository's GitHub Releases and unpack it:
+
+```sh
+tar -xzf univpn_tcp_forward-0.1.0a1.tar.gz
+cd univpn_tcp_forward-0.1.0a1
+```
+
+From this directory, no installation, third-party Python dependency, administrator privilege or `uv` is required.
 
 ```sh
 python3 -m univpn_forward \
@@ -58,11 +67,12 @@ Keep the forwarder process running. SSH `ControlMaster`/`ControlPersist` can reu
 
 ## iSH on iPhone
 
-Copy this source folder to iSH, then install the system tools and run the same command:
+Download the release source archive and make it available in iSH. Install the system tools, unpack it, and run the same command:
 
 ```sh
 apk add python3 openssh-client
-cd univpn-tcp-forward
+tar -xzf univpn_tcp_forward-0.1.0a1.tar.gz
+cd univpn_tcp_forward-0.1.0a1
 python3 -m univpn_forward \
   --gateway vpn.example.com --target 10.0.0.2 --target-port 22
 ```
@@ -96,6 +106,8 @@ python3 -m unittest discover -s tests -v
 python3 -m univpn_forward --help
 ```
 
-GitHub Actions runs these tests on macOS and Linux with Python 3.9 and 3.12. A successful CI run tests code without contacting any private VPN gateway.
+The included GitHub Actions workflow runs these tests on macOS and Linux with Python 3.9 and 3.12. A successful CI run tests code without contacting any private VPN gateway.
 
 MIT license. No official vendor binaries, gateway configuration, credentials or captured sessions are included.
+
+See [contribution guidelines](CONTRIBUTING.md), [changelog](CHANGELOG.md), and [release procedure](docs/releasing.md).

@@ -1,0 +1,24 @@
+name: Bug or interoperability report
+description: Report a reproducible failure without private gateway or account data.
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach credentials, private endpoint addresses, session tokens or unredacted packet captures.
+  - type: input
+    id: environment
+    attributes:
+      label: Version, operating system and Python version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and expected/actual behavior
+      description: Replace all gateway/target/account values with neutral examples.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include error types and timing; remove sensitive values before posting.

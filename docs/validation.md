@@ -39,3 +39,7 @@ This validates one gateway and a short idle interval. It does not establish mult
 ## Packaging and privacy
 
 The wheel and source archive are built locally and inspected for unexpected files. Private live-test scripts, logs and configuration reside in ignored `.local/`; they are excluded from distribution. The public repository starts with a fresh history rather than copying historical personal configuration from the application repository.
+
+## Alpha release preparation
+
+For `0.1.0a1`, the wheel installed and reported its version from outside the source directory. The source archive was extracted to a temporary directory and all 13 tests passed there. Release-note extraction, mismatched-tag rejection and YAML/shell/embedded-Python syntax checks passed locally. The GitHub-hosted workflow has not run yet; these checks are not a GitHub CI pass claim.
