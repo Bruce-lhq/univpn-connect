@@ -1,0 +1,11 @@
+.local/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+config.local.json
+credentials*.json
+*.log
+.DS_Store
