@@ -53,6 +53,8 @@ def parser():
 
 def credentials(args):
     if args.credentials_file:
+        if os.name == 'nt':
+            raise ValueError('Credential files require Unix permissions; use interactive authentication on Windows')
         with args.credentials_file.open('r', encoding='utf-8') as f:
             info = os.fstat(f.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:

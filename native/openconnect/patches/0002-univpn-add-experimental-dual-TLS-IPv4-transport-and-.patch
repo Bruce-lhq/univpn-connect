@@ -1,0 +1,912 @@
+From 2c98e99db30a85a92acad5dbf554817bf045feec Mon Sep 17 00:00:00 2001
+From: UniVPN Connect contributors <contributors@example.invalid>
+Date: Fri, 9 Oct 2026 01:43:41 +0800
+Subject: [PATCH 2/4] univpn: add experimental dual-TLS IPv4 transport and
+ tests
+
+
+diff --git a/Makefile.am b/Makefile.am
+index 4004217..7cb5b34 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -47,6 +47,7 @@ lib_srcs_juniper = oncp.c lzo.c auth-juniper.c
+ lib_srcs_pulse = pulse.c
+ lib_srcs_globalprotect = gpst.c win32-ipicmp.h auth-globalprotect.c
+ lib_srcs_array = array.c
++lib_srcs_univpn = univpn.c univpn-codec.h
+ lib_srcs_oath = oath.c
+ lib_srcs_oidc = oidc.c
+ lib_srcs_ppp = ppp.c ppp.h
+@@ -59,7 +60,7 @@ library_srcs += $(lib_srcs_juniper) $(lib_srcs_cisco) $(lib_srcs_oath) \
+ 		$(lib_srcs_globalprotect) $(lib_srcs_pulse) \
+ 		$(lib_srcs_oidc) $(lib_srcs_ppp) $(lib_srcs_nullppp) \
+ 		$(lib_srcs_f5) $(lib_srcs_fortinet) $(lib_srcs_json) \
+-		$(lib_srcs_array)
++		$(lib_srcs_array) $(lib_srcs_univpn)
+ 
+ lib_srcs_gnutls = gnutls.c gnutls_tpm.c gnutls_tpm2.c
+ lib_srcs_openssl = openssl.c openssl-pkcs11.c
+diff --git a/library.c b/library.c
+index f6caa7c..5c1d171 100644
+--- a/library.c
++++ b/library.c
+@@ -193,6 +193,7 @@ struct openconnect_info *openconnect_vpninfo_new(const char *useragent,
+ 	vpninfo->tun_fd = -1;
+ #endif
+ 	vpninfo->ssl_fd = -1;
++	vpninfo->aux_ssl_fd = -1;
+ 	vpninfo->dtls_fd = -1;
+ 	vpninfo->need_poll_cmd_fd = -1;
+ 	vpninfo->cmd_fd = -1;
+@@ -407,6 +408,15 @@ static const struct vpn_proto openconnect_protos[] = {
+ 		.tcp_mainloop = nullppp_mainloop,
+ 		.add_http_headers = http_common_headers,
+ 		.obtain_cookie = nullppp_obtain_cookie,
++	}, {
++		.name = "univpn",
++		.pretty_name = N_("Huawei UniVPN (experimental)"),
++		.description = N_("Experimental IPv4 over TLS support for Huawei UniVPN"),
++		.proto = PROTO_UNIVPN,
++		.vpn_close_session = univpn_bye,
++		.tcp_connect = univpn_connect,
++		.tcp_mainloop = univpn_mainloop,
++		.obtain_cookie = univpn_obtain_cookie,
+ 	}, {
+ 		.name = "array",
+ 		.pretty_name = N_("Array SSL VPN"),
+@@ -770,6 +780,7 @@ static void free_certinfo(struct cert_info *certinfo)
+ 
+ void openconnect_vpninfo_free(struct openconnect_info *vpninfo)
+ {
++	univpn_shutdown(vpninfo);
+ 	openconnect_close_https(vpninfo, 1);
+ 	if (vpninfo->proto->udp_shutdown)
+ 		vpninfo->proto->udp_shutdown(vpninfo);
+diff --git a/mainloop.c b/mainloop.c
+index f4babc7..3836e7e 100644
+--- a/mainloop.c
++++ b/mainloop.c
+@@ -185,7 +185,7 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 		int did_work = 0;
+ 		int timeout;
+ #ifdef _WIN32
+-		HANDLE events[4];
++		HANDLE events[5];
+ 		int nr_events = 0;
+ #else
+ 		struct timeval tv;
+@@ -284,6 +284,7 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 			} else {
+ 				/* close all connections and wait for the user to call
+ 				   openconnect_mainloop() again */
++				univpn_shutdown(vpninfo);
+ 				openconnect_close_https(vpninfo, 0);
+ 				if (vpninfo->dtls_state > DTLS_DISABLED) {
+ 					vpninfo->proto->udp_close(vpninfo);
+@@ -315,6 +316,10 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 			WSAEventSelect(vpninfo->ssl_fd, vpninfo->ssl_event, vpninfo->ssl_monitored);
+ 			events[nr_events++] = vpninfo->ssl_event;
+ 		}
++		if (vpninfo->aux_ssl_monitored) {
++			WSAEventSelect(vpninfo->aux_ssl_fd, vpninfo->aux_ssl_event, vpninfo->aux_ssl_monitored);
++			events[nr_events++] = vpninfo->aux_ssl_event;
++		}
+ 		if (vpninfo->cmd_monitored) {
+ 			WSAEventSelect(vpninfo->cmd_fd, vpninfo->cmd_event, vpninfo->cmd_monitored);
+ 			events[nr_events++] = vpninfo->cmd_event;
+@@ -332,7 +337,7 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ #else
+ #ifdef HAVE_EPOLL
+ 		if (vpninfo->epoll_fd >= 0) {
+-			struct epoll_event evs[5];
++			struct epoll_event evs[6];
+ 
+ 			/* During busy periods, monitor_read_fd() and unmonitor_read_fd()
+ 			 * may get called multiple times as we go round and round the
+@@ -345,6 +350,7 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 			if (vpninfo->epoll_update) {
+ 				update_epoll_fd(vpninfo, tun);
+ 				update_epoll_fd(vpninfo, ssl);
++				update_epoll_fd(vpninfo, aux_ssl);
+ 				update_epoll_fd(vpninfo, cmd);
+ 				update_epoll_fd(vpninfo, dtls);
+ #ifdef HAVE_VHOST
+@@ -357,7 +363,7 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 			vhost_r = 0;
+ #endif
+ 
+-			int nfds = epoll_wait(vpninfo->epoll_fd, evs, 5, timeout);
++			int nfds = epoll_wait(vpninfo->epoll_fd, evs, 6, timeout);
+ 			if (nfds < 0) {
+ 				if (errno != EINTR) {
+ 					ret = -errno;
+@@ -370,7 +376,8 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 				if (evs[nfds].events & (EPOLLIN|EPOLLERR)) {
+ 					if (evs[nfds].data.fd == vpninfo->tun_fd)
+ 						tun_r = 1;
+-					else if (evs[nfds].data.fd == vpninfo->ssl_fd)
++					else if (evs[nfds].data.fd == vpninfo->ssl_fd ||
++						 evs[nfds].data.fd == vpninfo->aux_ssl_fd)
+ 						tcp_r = 1;
+ 					else if (evs[nfds].data.fd == vpninfo->dtls_fd)
+ 						udp_r = 1;
+@@ -406,6 +413,8 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
+ 			udp_r = FD_ISSET(vpninfo->dtls_fd, &rfds);
+ 		if (vpninfo->ssl_fd >= 0)
+ 			tcp_r = FD_ISSET(vpninfo->ssl_fd, &rfds);
++		if (vpninfo->aux_ssl_fd >= 0)
++			tcp_r |= FD_ISSET(vpninfo->aux_ssl_fd, &rfds);
+ #endif
+ 	}
+ 
+diff --git a/openconnect-internal.h b/openconnect-internal.h
+index 78d701d..c8212b3 100644
+--- a/openconnect-internal.h
++++ b/openconnect-internal.h
+@@ -258,6 +258,7 @@ struct pkt {
+ #define PROTO_FORTINET		5
+ #define PROTO_NULLPPP		6
+ #define PROTO_ARRAY		7
++#define PROTO_UNIVPN		8
+ 
+ /* All supported PPP packet framings/encapsulations */
+ #define PPP_ENCAP_RFC1661	1	/* Plain/synchronous/pre-framed PPP (RFC1661) */
+@@ -414,7 +415,9 @@ struct pkt_q {
+ 
+ struct vpn_proto;
+ 
++struct univpn_state;
+ struct openconnect_info {
++	struct univpn_state *univpn;
+ 	const struct vpn_proto *proto;
+ 
+ #ifdef HAVE_ICONV
+@@ -714,8 +717,8 @@ struct openconnect_info {
+ 	int idle_timeout; /* Returned by server */
+ 
+ #ifdef _WIN32
+-	long dtls_monitored, ssl_monitored, cmd_monitored, tun_monitored;
+-	HANDLE dtls_event, ssl_event, cmd_event;
++	long dtls_monitored, ssl_monitored, aux_ssl_monitored, cmd_monitored, tun_monitored;
++	HANDLE dtls_event, ssl_event, aux_ssl_event, cmd_event;
+ #else
+ 	int _select_nfds;
+ 	fd_set _select_rfds;
+@@ -724,7 +727,7 @@ struct openconnect_info {
+ #ifdef HAVE_EPOLL
+ 	int epoll_fd;
+ 	int epoll_update;
+-	uint32_t tun_epoll, ssl_epoll, dtls_epoll, cmd_epoll;
++	uint32_t tun_epoll, ssl_epoll, aux_ssl_epoll, dtls_epoll, cmd_epoll;
+ #ifdef HAVE_VHOST
+ 	uint32_t vhost_call_epoll;
+ #endif
+@@ -753,6 +756,7 @@ struct openconnect_info {
+ 	int tun_fd;
+ #endif
+ 	int ssl_fd;
++	int aux_ssl_fd;
+ 	int dtls_fd;
+ 
+ 	int dtls_tos_current;
+@@ -1385,6 +1389,14 @@ int openconnect_ppp_new(struct openconnect_info *vpninfo, int encap, int want_ip
+ int ppp_reset(struct openconnect_info *vpninfo);
+ int check_http_status(const char *buf, int len);
+ 
++
++/* univpn.c */
++int univpn_obtain_cookie(struct openconnect_info *);
++int univpn_connect(struct openconnect_info *);
++int univpn_mainloop(struct openconnect_info *, int *, int);
++int univpn_bye(struct openconnect_info *, const char *);
++void univpn_shutdown(struct openconnect_info *);
++
+ /* array.c */
+ int array_obtain_cookie(struct openconnect_info *vpninfo);
+ int array_connect(struct openconnect_info *vpninfo);
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index 4314a17..65851b3 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -486,3 +486,8 @@ TESTS_ENVIRONMENT += DISABLE_ASAN_BROKEN_TESTS=1
+ else
+ TESTS_ENVIRONMENT += DISABLE_ASAN_BROKEN_TESTS=0
+ endif
++
++check_PROGRAMS = univpn-codec
++univpn_codec_SOURCES = univpn-codec.c ../univpn-codec.h
++TESTS += univpn-codec
++EXTRA_DIST += univpn-integration.py
+diff --git a/tests/univpn-codec.c b/tests/univpn-codec.c
+new file mode 100644
+index 0000000..4dd5c87
+--- /dev/null
++++ b/tests/univpn-codec.c
+@@ -0,0 +1,25 @@
++/* LGPL-2.1-or-later */
++#include "../univpn-codec.h"
++#include <assert.h>
++#include <stdio.h>
++int main(void)
++{
++	unsigned cmd, len, type; const unsigned char *value; size_t pos;
++	unsigned char h[] = {0xc1,0x92,0xa4,0xd6,1,0x66,0xff,0xff};
++	unsigned char t[] = {0,99,0,2,42,43};
++	unsigned char ip[20] = {0x45,0,0,20};
++	unsigned char route[] = {10,0,0,0,8};
++	for (int i = 0; i < 8; i++) assert(uv_header(h,i,&cmd,&len) == 0);
++	assert(uv_header(h,8,&cmd,&len) == 1 && cmd == 0x66 && len == 65535);
++	h[4] = 2; assert(uv_header(h,8,&cmd,&len) == -1);
++	pos = 0; assert(uv_tlv(t,6,&pos,&type,&value,&len) == 1);
++	assert(type == 99 && len == 2 && value[1] == 43);
++	assert(uv_tlv(t,6,&pos,&type,&value,&len) == 0);
++	for (int i = 1; i < 6; i++) { pos = 0; assert(uv_tlv(t,i,&pos,&type,&value,&len) == -1); }
++	assert(uv_ipv4(ip,20)); ip[0] = 0x44; assert(!uv_ipv4(ip,20));
++	ip[0] = 0x65; assert(!uv_ipv4(ip,20)); ip[0] = 0x46; assert(!uv_ipv4(ip,20));
++	assert(uv_route(route)); route[3] = 1; assert(!uv_route(route));
++	route[4] = 32; assert(uv_route(route)); route[4] = 33; assert(!uv_route(route));
++	route[4] = 0; memset(route,0,4); assert(uv_route(route));
++	puts("UniVPN codec tests passed"); return 0;
++}
+diff --git a/tests/univpn-integration.py b/tests/univpn-integration.py
+new file mode 100644
+index 0000000..25cc84f
+--- /dev/null
++++ b/tests/univpn-integration.py
+@@ -0,0 +1,257 @@
++#!/usr/bin/env python3
++"""Exercise the real native client against a loopback-only mock TLS gateway.
++No root/TUN device, remote server or private configuration is needed.
++Run: python3 tests/univpn-integration.py [path-to-openconnect]
++"""
++import os
++import pathlib
++import shlex
++import signal
++import socket
++import ssl
++import struct
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++import unittest
++
++BINARY = str(pathlib.Path(sys.argv.pop(1) if len(sys.argv) > 1 else './openconnect').resolve())
++MAGIC = bytes.fromhex('c192a4d601')
++TOKEN = bytes(range(32))
++assert len(TOKEN) == 32
++
++def exact(sock, size):
++    result = b''
++    while len(result) < size:
++        part = sock.recv(size - len(result))
++        if not part:
++            raise EOFError()
++        result += part
++    return result
++
++def frame(cmd, body=b''):
++    return MAGIC + struct.pack('!BH', cmd, len(body)) + body
++
++def receive(sock):
++    header = exact(sock, 8)
++    if header[:5] != MAGIC:
++        raise ValueError('bad header')
++    return header[5], exact(sock, struct.unpack('!H', header[6:])[0])
++
++def tlv(kind, value):
++    return struct.pack('!HH', kind, len(value)) + value
++
++class Gateway:
++    def __init__(self, ctx, auth_ok=True, malformed=False, data_ctx=None):
++        self.ctx, self.auth_ok, self.malformed = ctx, auth_ok, malformed
++        self.data_ctx, self.count = data_ctx, 0
++        self.listener = socket.socket()
++        self.listener.bind(('127.0.0.1', 0))
++        self.port = self.listener.getsockname()[1]
++        self.listener.listen()
++        self.listener.settimeout(.2)
++        self.stop = threading.Event()
++        self.sockets, self.errors, self.received = [], [], []
++        self.thread = threading.Thread(target=self.accept, daemon=True)
++        self.thread.start()
++    def accept(self):
++        while not self.stop.is_set():
++            try:
++                raw, _ = self.listener.accept()
++            except socket.timeout:
++                continue
++            except OSError:
++                return
++            self.sockets.append(raw)
++            ctx = self.data_ctx if self.count and self.data_ctx else self.ctx
++            self.count += 1
++            threading.Thread(target=self.handle, args=(raw,ctx), daemon=True).start()
++    def send(self, sock, cmd, body):
++        # Header/body fragmentation also exercises handshake buffering.
++        data = frame(cmd, body)
++        if cmd == 0x66:
++            sock.sendall(data)
++            return
++        for part in (data[:3], data[3:7], data[7:9], data[9:]):
++            if part:
++                sock.sendall(part)
++                time.sleep(.005)
++    def handle(self, raw, ctx):
++        try:
++            with ctx.wrap_socket(raw, server_side=True) as sock:
++                self.sockets.append(sock)
++                sock.settimeout(30)
++                first = exact(sock, 8)
++                if first[:4] == bytes.fromhex('fefcefbe'):
++                    first += exact(sock, 332)
++                    assert len(first) == 340 and first[80:89] == b'localhost'
++                    self.send(sock, 0, b'\0'*4)
++                    cmd, auth = receive(sock)
++                    assert cmd == 1 and auth[:9] == b'localhost'
++                    assert b'mockuser\0' in auth and b'mock%26%2B%25pass\0' in auth
++                    self.send(sock, 1, struct.pack('!II', 0 if self.auth_ok else 1, 0) + tlv(3, TOKEN))
++                    if not self.auth_ok:
++                        return
++                    cmd, body = receive(sock)
++                    assert cmd == 3 and body == TOKEN
++                    self.send(sock, 3, b'\0'*4 + tlv(1, socket.inet_aton('10.90.0.2') + b'\x20') +
++                              tlv(6, socket.inet_aton('198.51.100.0') + b'\x18'))
++                    while True:
++                        cmd, body = receive(sock)
++                        assert cmd == 6 and body[:32] == TOKEN and len(body) == 36
++                        self.send(sock, 6, b'')
++                else:
++                    assert first[:5] == MAGIC and first[5] == 0x64
++                    assert exact(sock, 32) == TOKEN
++                    self.send(sock, 0x64, b'\0')
++                    if self.malformed:
++                        sock.sendall(b'WRONGHDR')
++                        time.sleep(.2)
++                        return
++                    while True:
++                        cmd, body = receive(sock)
++                        if cmd == 0x65:
++                            self.send(sock, cmd, b'')
++                        else:
++                            assert cmd == 0x66 and body[:8] == b'\0'*8
++                            self.received.append(body[8:])
++                            self.send(sock, cmd, body)
++        except (EOFError, OSError, ssl.SSLError):
++            pass
++        except Exception as exc:
++            self.errors.append(str(exc))
++    def close(self):
++        self.stop.set()
++        self.listener.close()
++        for sock in self.sockets:
++            try:
++                sock.shutdown(socket.SHUT_RDWR)
++            except OSError:
++                pass
++            sock.close()
++        self.thread.join(1)
++
++class Integration(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.tmp = tempfile.TemporaryDirectory(prefix='univpn-mock-')
++        cls.root = pathlib.Path(cls.tmp.name)
++        cls.cert, cls.key = cls.root/'server.pem', cls.root/'server.key'
++        subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
++                        '-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1,DNS:localhost',
++                        '-keyout',str(cls.key),'-out',str(cls.cert)], check=True,
++                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++        cls.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
++        cls.ctx.load_cert_chain(cls.cert, cls.key)
++    @classmethod
++    def tearDownClass(cls):
++        cls.tmp.cleanup()
++    def run_client(self, gateway, packet_test=False, cafile=True):
++        report = self.root/'result'
++        report.unlink(missing_ok=True)
++        script = self.root/'packet.py'
++        script.write_text('''import os, socket, struct, time, pathlib
++s=socket.socket(fileno=int(os.environ["VPNFD"]))
++s.settimeout(8)
++for proto in (6,17,1):
++    packet=struct.pack("!BBHHHBBH4s4s",0x45,0,36,1,0,64,proto,0,socket.inet_aton("10.90.0.2"),socket.inet_aton("198.51.100.1"))+b"0123456789abcdef"
++    s.send(packet)
++    assert s.recv(65535)==packet
++pathlib.Path(os.environ["MOCK_REPORT"]).write_text("PASS")
++time.sleep(60)
++''')
++        cmd = [BINARY, '--no-proxy', '--verbose', '--protocol=univpn','--non-inter','--user=mockuser','--passwd-on-stdin',
++               '--authgroup=localhost','--no-dtls','https://127.0.0.1:'+str(gateway.port)]
++        if cafile:
++            cmd += ['--cafile='+str(self.cert)]
++        if packet_test:
++            cmd += ['--script-tun','--script', shlex.quote(sys.executable)+' '+shlex.quote(str(script))]
++        else:
++            cmd += ['--authenticate']
++        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++                                stderr=subprocess.PIPE, env={**os.environ,'MOCK_REPORT':str(report)})
++        proc.stdin.write(b'mock&+%pass\n'); proc.stdin.close(); proc.stdin = None
++        try:
++            if packet_test:
++                end = time.monotonic()+15
++                while time.monotonic()<end and proc.poll() is None and not report.exists():
++                    time.sleep(.05)
++                passed = report.exists()
++                if proc.poll() is None:
++                    proc.send_signal(signal.SIGINT)
++                out, err = proc.communicate(timeout=8)
++                return passed, proc.returncode, 'exit='+str(proc.returncode)+'\n'+out.decode(errors='replace')+err.decode(errors='replace')
++            out, err = proc.communicate(timeout=40)
++            return False, proc.returncode, 'exit='+str(proc.returncode)+'\n'+out.decode(errors='replace')+err.decode(errors='replace')
++        finally:
++            if proc.poll() is None:
++                proc.kill(); proc.communicate()
++    def test_ipv4_tcp_udp_icmp_frames(self):
++        gateway = Gateway(self.ctx)
++        try:
++            passed, _, err = self.run_client(gateway, packet_test=True)
++            self.assertTrue(passed, err)
++            self.assertEqual([p[9] for p in gateway.received], [6,17,1])
++            self.assertEqual(gateway.errors, [])
++        finally:
++            gateway.close()
++    def test_authentication_success(self):
++        gateway = Gateway(self.ctx)
++        try:
++            _, code, err = self.run_client(gateway)
++            self.assertEqual(code, 0, err)
++            self.assertEqual(gateway.errors, [])
++        finally:
++            gateway.close()
++    def test_authentication_rejected(self):
++        gateway = Gateway(self.ctx, auth_ok=False)
++        try:
++            _, code, err = self.run_client(gateway)
++            self.assertEqual(code, 1)
++            self.assertNotIn('mock&+%pass', err)
++            self.assertNotIn('AddressSanitizer', err)
++            self.assertEqual(gateway.errors, [])
++        finally:
++            gateway.close()
++    def test_untrusted_certificate_rejected(self):
++        gateway = Gateway(self.ctx)
++        try:
++            _, code, _ = self.run_client(gateway, cafile=False)
++            self.assertEqual(code, 1)
++            self.assertEqual(gateway.received, [])
++        finally:
++            gateway.close()
++    def test_data_channel_must_match_control_identity(self):
++        second_cert, second_key = self.root/'second.pem', self.root/'second.key'
++        subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
++                        '-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1,DNS:localhost',
++                        '-keyout',str(second_key),'-out',str(second_cert)],check=True,
++                       stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
++        second_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
++        second_ctx.load_cert_chain(second_cert,second_key)
++        bundle = self.root/'both-trusted.pem'
++        bundle.write_bytes(self.cert.read_bytes()+second_cert.read_bytes())
++        gateway = Gateway(self.ctx,data_ctx=second_ctx)
++        original_cert = self.cert; self.cert = bundle
++        try:
++            passed, code, err = self.run_client(gateway,packet_test=True)
++            self.assertFalse(passed)
++            self.assertEqual(code,2,err)
++            self.assertEqual(gateway.received,[])
++            self.assertNotIn('AddressSanitizer',err)
++        finally:
++            self.cert = original_cert; gateway.close()
++    def test_malformed_data_frame_terminates(self):
++        gateway = Gateway(self.ctx, malformed=True)
++        try:
++            passed, code, err = self.run_client(gateway, packet_test=True)
++            self.assertFalse(passed)
++            self.assertEqual(code, 1)
++            self.assertIn('invalid frame', err)
++        finally:
++            gateway.close()
++
++if __name__ == '__main__':
++    unittest.main(verbosity=2)
+diff --git a/univpn-codec.h b/univpn-codec.h
+new file mode 100644
+index 0000000..afca11d
+--- /dev/null
++++ b/univpn-codec.h
+@@ -0,0 +1,47 @@
++/* UniVPN wire bounds shared by the client and standalone tests.
++ * Copyright (C) 2026 UniVPN Connect contributors. LGPL-2.1-or-later. */
++#ifndef OPENCONNECT_UNIVPN_CODEC_H
++#define OPENCONNECT_UNIVPN_CODEC_H
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++#define UV_HEADER 8
++#define UV_MAX_PAYLOAD 65535
++static inline unsigned uv_be16(const unsigned char *p)
++{
++	return ((unsigned)p[0] << 8) | p[1];
++}
++static inline int uv_header(const unsigned char *p, size_t n, unsigned *cmd, unsigned *len)
++{
++	if (n < UV_HEADER) return 0;
++	if (memcmp(p, "\xc1\x92\xa4\xd6\x01", 5)) return -1;
++	*cmd = p[5]; *len = uv_be16(p + 6);
++	return 1;
++}
++static inline int uv_tlv(const unsigned char *p, size_t n, size_t *offset,
++			 unsigned *type, const unsigned char **value, unsigned *len)
++{
++	size_t pos = *offset;
++	if (pos == n) return 0;
++	if (pos > n || n - pos < 4) return -1;
++	*type = uv_be16(p + pos); *len = uv_be16(p + pos + 2);
++	if (*len > n - pos - 4) return -1;
++	*value = p + pos + 4; *offset = pos + 4 + *len;
++	return 1;
++}
++static inline int uv_ipv4(const unsigned char *p, size_t n)
++{
++	unsigned ihl;
++	if (n < 20 || (p[0] >> 4) != 4) return 0;
++	ihl = (p[0] & 15) * 4;
++	return ihl >= 20 && ihl <= n && uv_be16(p + 2) == n;
++}
++static inline int uv_route(const unsigned char *p)
++{
++	uint32_t ip = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
++		((uint32_t)p[2] << 8) | p[3];
++	if (p[4] > 32) return 0;
++	return p[4] == 32 || !(ip & (p[4] ? (UINT32_MAX >> p[4]) : UINT32_MAX));
++}
++#endif
+diff --git a/univpn.c b/univpn.c
+new file mode 100644
+index 0000000..5809809
+--- /dev/null
++++ b/univpn.c
+@@ -0,0 +1,340 @@
++/* Experimental Huawei UniVPN IPv4 over two TLS channels.
++ * Copyright (C) 2026 UniVPN Connect contributors. LGPL-2.1-or-later.
++ * Wire observations are documented in www/huawei.xml. */
++#include <config.h>
++#include "openconnect-internal.h"
++#include "univpn-codec.h"
++
++struct uv_channel {
++	unsigned char rx[UV_HEADER + UV_MAX_PAYLOAD];
++	unsigned char tx[UV_HEADER + UV_MAX_PAYLOAD];
++	unsigned rxused, rxwant, txused, txsent;
++};
++struct univpn_state {
++	struct openconnect_info *owner, *data;
++	struct uv_channel control, packets;
++	unsigned char token[32];
++	char *peer_hash;
++	time_t started, control_due, data_due;
++};
++
++void univpn_shutdown(struct openconnect_info *v)
++{
++	struct univpn_state *s = v->univpn;
++	if (!s) return;
++	v->univpn = NULL;
++	if (v->aux_ssl_fd >= 0) {
++		unmonitor_fd(v, aux_ssl);
++		v->aux_ssl_fd = -1;
++	}
++	if (s->data) openconnect_vpninfo_free(s->data);
++	free(s->peer_hash);
++	clear_mem(s, sizeof(*s));
++	free(s);
++}
++int univpn_bye(struct openconnect_info *v, const char *reason)
++{
++	univpn_shutdown(v);
++	openconnect_close_https(v, 0);
++	return 0;
++}
++
++static int uv_wait(struct openconnect_info *owner, int fd, int writing, time_t deadline)
++{
++	fd_set r, w; struct timeval tv = { 0, 100000 }; int maxfd = fd, ret;
++	FD_ZERO(&r); FD_ZERO(&w);
++	if (writing) FD_SET(fd, &w); else FD_SET(fd, &r);
++	cmd_fd_set(owner, &r, &maxfd);
++	ret = select(maxfd + 1, &r, &w, NULL, &tv);
++	if (ret < 0 && errno != EINTR) return -errno;
++	if (is_cancel_pending(owner, &r)) return -EINTR;
++	return time(NULL) >= deadline ? -ETIMEDOUT : 0;
++}
++static int uv_frame(struct uv_channel *c, unsigned cmd, const void *p, unsigned len)
++{
++	if (c->txused || len > UV_MAX_PAYLOAD) return -EINVAL;
++	memcpy(c->tx, "\xc1\x92\xa4\xd6\x01", 5);
++	c->tx[5] = cmd; store_be16(c->tx + 6, len);
++	if (len) memcpy(c->tx + 8, p, len);
++	c->txused = len + 8; c->txsent = 0;
++	return 0;
++}
++/* Keep the exact TLS retry buffer until the backend consumes it. */
++static int uv_write(struct openconnect_info *tls, struct uv_channel *c)
++{
++	int n;
++	if (!c->txused) return 0;
++	n = ssl_nonblock_write(tls, 0, c->tx + c->txsent, c->txused - c->txsent);
++	if (n < 0) return -EIO;
++	if (!n) return 0;
++	c->txsent += n;
++	if (c->txsent == c->txused) {
++		clear_mem(c->tx, c->txused);
++		c->txused = c->txsent = 0;
++		unmonitor_write_fd(tls, ssl);
++	}
++	return 1;
++}
++/* 1 = complete frame; 0 = would block/partial; negative = invalid/closed. */
++static int uv_read(struct openconnect_info *tls, struct uv_channel *c)
++{
++	unsigned cmd, len; int n;
++	if (!c->rxwant) c->rxwant = UV_HEADER;
++	for (;;) {
++		n = ssl_nonblock_read(tls, 0, c->rx + c->rxused, c->rxwant - c->rxused);
++		if (n < 0) return -EIO;
++		if (!n) return 0;
++		c->rxused += n;
++		if (c->rxused != c->rxwant) continue;
++		if (c->rxwant == UV_HEADER) {
++			if (uv_header(c->rx, c->rxused, &cmd, &len) != 1) return -EINVAL;
++			c->rxwant += len;
++		}
++		if (c->rxused == c->rxwant) return 1;
++	}
++}
++static void uv_consumed(struct uv_channel *c)
++{
++	clear_mem(c->rx, c->rxused);
++	c->rxused = 0; c->rxwant = UV_HEADER;
++}
++static int uv_exchange(struct openconnect_info *owner, struct openconnect_info *tls,
++		       struct uv_channel *c, unsigned expected)
++{
++	time_t deadline = time(NULL) + 30; int ret;
++	while (c->txused) {
++		ret = uv_write(tls, c);
++		if (ret < 0) return ret;
++		if (!ret && (ret = uv_wait(owner, tls->ssl_fd, 1, deadline))) return ret;
++	}
++	while (!(ret = uv_read(tls, c))) {
++		ret = uv_wait(owner, tls->ssl_fd, 0, deadline);
++		if (ret) return ret;
++	}
++	if (ret < 0) return ret;
++	return c->rx[5] == expected ? 0 : -EINVAL;
++}
++static void uv_escape(struct oc_text_buf *b, const char *value)
++{
++	for (; *value; value++) {
++		if (*value == '%' || *value == '&' || *value == '+')
++			buf_append(b, "%%%02X", (unsigned char)*value);
++		else buf_append_bytes(b, value, 1);
++	}
++	buf_append_zeroes(b, 1);
++}
++static int uv_auth_field(struct oc_text_buf *b, unsigned type, const char *value, int escaped)
++{
++	struct oc_text_buf *tmp = buf_alloc(); int ret;
++	if (!tmp) return -ENOMEM;
++	if (escaped) uv_escape(tmp, value); else buf_append_bytes(tmp, value, strlen(value));
++	ret = buf_error(tmp);
++	if (!ret && tmp->pos <= 65535) {
++		buf_append_be16(b, type); buf_append_be16(b, tmp->pos);
++		buf_append_bytes(b, tmp->data, tmp->pos);
++	} else if (!ret) ret = -E2BIG;
++	clear_mem(tmp->data, tmp->pos); buf_free(tmp);
++	return ret;
++}
++static int uv_vip(struct openconnect_info *v, const unsigned char *p, unsigned n)
++{
++	struct oc_ip_info info = { 0 }; struct oc_vpn_option *opts = NULL;
++	unsigned type, len; const unsigned char *value; size_t pos = 4; int ret;
++	char text[64], mask[16]; unsigned char netmask[4];
++	if (n < 4 || p[0]) { ret = -EPERM; goto out; }
++	while ((ret = uv_tlv(p, n, &pos, &type, &value, &len)) > 0) {
++		if (type == 1) {
++			uint32_t bits;
++			if (len != 5 || value[4] > 32 || info.addr) { ret = -EINVAL; goto out; }
++			inet_ntop(AF_INET, value, text, sizeof(text));
++			info.addr = add_option_dup(&opts, "ipaddr", text, -1);
++			bits = value[4] ? UINT32_MAX << (32 - value[4]) : 0;
++			store_be32(netmask, bits); inet_ntop(AF_INET, netmask, mask, sizeof(mask));
++			info.netmask = add_option_dup(&opts, "netmask", mask, -1);
++			if (!info.addr || !info.netmask) { ret = -ENOMEM; goto out; }
++		} else if (type == 6) {
++			if (len % 5) { ret = -EINVAL; goto out; }
++			for (unsigned i = 0; i < len; i += 5) {
++				struct oc_split_include *inc;
++				if (!uv_route(value + i)) { ret = -EINVAL; goto out; }
++				inet_ntop(AF_INET, value + i, text, sizeof(text));
++				snprintf(text + strlen(text), sizeof(text) - strlen(text), "/%u", value[i+4]);
++				inc = calloc(1, sizeof(*inc)); if (!inc) { ret = -ENOMEM; goto out; }
++				inc->route = add_option_dup(&opts, "split-include", text, -1);
++				if (!inc->route) { free(inc); { ret = -ENOMEM; goto out; } }
++				inc->next = info.split_includes; info.split_includes = inc;
++			}
++		}
++	}
++	if (ret < 0 || !info.addr) { ret = -EINVAL; goto out; }
++	info.mtu = v->reqmtu ? v->reqmtu : 1400;
++	if (info.mtu < 576 || info.mtu > 65527) { ret = -EINVAL; goto out; }
++	ret = install_vpn_opts(v, opts, &info);
++	if (!ret) return 0;
++out:
++	free_split_routes(&info); free_optlist(opts);
++	return ret;
++}
++int univpn_obtain_cookie(struct openconnect_info *v)
++{
++	struct univpn_state *s; struct oc_auth_form *form = NULL;
++	struct oc_form_opt *user, *pass; struct oc_text_buf *b = NULL;
++	const char *domain = v->authgroup ? v->authgroup : v->hostname;
++	unsigned char first[340] = {0}, hash[32];
++	unsigned type, len; const unsigned char *value; size_t pos; int ret, found = 0;
++	char mac[18];
++	if (!domain || strlen(domain) > 255 || v->proxy) { vpn_progress(v, PRG_ERR, "UniVPN invalid domain or unsupported proxy configuration\n"); return -EINVAL; }
++	univpn_shutdown(v);
++	s = calloc(1, sizeof(*s)); if (!s) return -ENOMEM;
++	v->univpn = s; s->owner = v;
++	form = calloc(1, sizeof(*form)); user = calloc(1, sizeof(*user)); pass = calloc(1, sizeof(*pass));
++	if (!form || !user || !pass) { free(form); form = NULL; free(user); free(pass); ret = -ENOMEM; goto out; }
++	form->auth_id = strdup("univpn"); form->opts = user; user->next = pass;
++	user->type = OC_FORM_OPT_TEXT; user->name = strdup("username"); user->label = strdup("Username:");
++	pass->type = OC_FORM_OPT_PASSWORD; pass->name = strdup("password"); pass->label = strdup("Password:");
++	if (!form->auth_id || !user->name || !user->label || !pass->name || !pass->label) { ret = -ENOMEM; goto out; }
++	ret = process_auth_form(v, form);
++	if (ret || !user->_value || !pass->_value) { ret = -EINTR; goto out; }
++	ret = openconnect_open_https(v); if (ret) goto out;
++	ret = set_sock_nonblock(v->ssl_fd); if (ret) goto out;
++	memcpy(first, "\xfe\xfc\xef\xbe\xc1\x92\xa4\xd6", 8);
++	store_be16(first + 12, 29); store_be16(first + 14, 324);
++	memcpy(first + 80, domain, strlen(domain)); first[337] = 1;
++	memcpy(s->control.tx, first, sizeof(first)); s->control.txused = sizeof(first);
++	ret = uv_exchange(v, v, &s->control, 0); if (ret) goto out;
++	if (s->control.rxused != 12 || load_be32(s->control.rx + 8)) { ret = -EINVAL; goto out; }
++	uv_consumed(&s->control);
++	b = buf_alloc(); if (!b) { ret = -ENOMEM; goto out; }
++	buf_append_bytes(b, domain, strlen(domain)); buf_append_zeroes(b, 260 - strlen(domain));
++	ret = openconnect_sha256(hash, user->_value, strlen(user->_value)); if (ret) goto out;
++	snprintf(mac, sizeof(mac), "02:%02x:%02x:%02x:%02x:%02x", hash[1], hash[2], hash[3], hash[4], hash[5]);
++	if ((ret = uv_auth_field(b, 1, user->_value, 1)) || (ret = uv_auth_field(b, 2, pass->_value, 1)) ||
++	    (ret = uv_auth_field(b, 3, mac, 0)) || (ret = buf_error(b))) goto out;
++	ret = uv_frame(&s->control, 1, b->data, b->pos); if (ret) goto out;
++	clear_mem(b->data, b->pos); buf_free(b); b = NULL;
++	free_auth_form(form); form = NULL;
++	ret = uv_exchange(v, v, &s->control, 1); if (ret) goto out;
++	if (s->control.rxused < 16) { ret = -EINVAL; goto out; }
++	if (load_be32(s->control.rx + 8)) { ret = -EPERM; goto out; }
++	pos = 8;
++	while ((ret = uv_tlv(s->control.rx + 8, s->control.rxused - 8, &pos, &type, &value, &len)) > 0) {
++		if (type == 3) { if (len != 32 || found) { ret = -EINVAL; goto out; } memcpy(s->token, value, 32); found = 1; }
++	}
++	if (ret < 0 || !found) { ret = -EINVAL; goto out; }
++	uv_consumed(&s->control);
++	ret = uv_frame(&s->control, 3, s->token, 32); if (ret) goto out;
++	ret = uv_exchange(v, v, &s->control, 3); if (ret) goto out;
++	ret = uv_vip(v, s->control.rx + 8, s->control.rxused - 8); if (ret) goto out;
++	uv_consumed(&s->control);
++	if (!openconnect_get_peer_cert_hash(v)) { ret = -EPERM; goto out; }
++	s->peer_hash = strdup(openconnect_get_peer_cert_hash(v));
++	if (!s->peer_hash) { ret = -ENOMEM; goto out; }
++	/* This token is meaningful only while its authenticated control channel is open. */
++	b = buf_alloc(); if (!b) { ret = -ENOMEM; goto out; }
++	for (int i = 0; i < 32; i++) buf_append(b, "%02x", s->token[i]);
++	ret = buf_error(b); if (ret) goto out;
++	free_pass(&v->cookie); v->cookie = strdup(b->data);
++	if (!v->cookie) { ret = -ENOMEM; goto out; }
++	vpn_progress(v, PRG_INFO, _("UniVPN authentication and IPv4 configuration received\n"));
++	ret = 0;
++out:
++	if (b) { clear_mem(b->data, b->pos); buf_free(b); }
++	if (form) free_auth_form(form);
++	if (ret) { vpn_progress(v, PRG_ERR, "UniVPN authentication failed (%d)\n", ret); univpn_shutdown(v); openconnect_close_https(v, 0); }
++	return ret;
++}
++static int uv_validate_data(void *priv, const char *reason)
++{
++	struct univpn_state *s = priv;
++	return openconnect_check_peer_cert_hash(s->data, s->peer_hash) ? -EPERM : 0;
++}
++static void __attribute__((format(printf, 3, 4))) uv_progress(void *priv, int level, const char *fmt, ...)
++{
++	struct univpn_state *s = priv; va_list ap; char line[1024];
++	va_start(ap, fmt); vsnprintf(line, sizeof(line), fmt, ap); va_end(ap);
++	vpn_progress(s->owner, level, "%s", line);
++}
++int univpn_connect(struct openconnect_info *v)
++{
++	struct univpn_state *s = v->univpn; int ret;
++	if (!s || v->ssl_fd < 0) {
++		vpn_progress(v, PRG_ERR, _("UniVPN requires a live authenticated control channel; cookie-only reconnect is unsupported\n"));
++		return -EPERM;
++	}
++	if (s->data) return -EINVAL;
++	s->data = openconnect_vpninfo_new(v->useragent, uv_validate_data, NULL, NULL, uv_progress, s);
++	if (!s->data) return -ENOMEM;
++#define COPY(field) do { if (v->field && !(s->data->field = strdup(v->field))) return -ENOMEM; } while (0)
++	COPY(hostname); COPY(unique_hostname); COPY(sni); COPY(cafile); COPY(ciphersuite_config);
++#undef COPY
++	s->data->port = v->port; s->data->no_system_trust = v->no_system_trust;
++	s->data->no_tls13 = v->no_tls13; s->data->pfs = v->pfs;
++	s->data->allow_insecure_crypto = v->allow_insecure_crypto;
++	/* Share cancellation only during the child handshake; ownership stays with the parent. */
++	s->data->cmd_fd = v->cmd_fd;
++	s->data->cmd_fd_internal = v->cmd_fd_internal;
++	ret = openconnect_open_https(s->data);
++	v->got_cancel_cmd |= s->data->got_cancel_cmd;
++	v->got_pause_cmd |= s->data->got_pause_cmd;
++	s->data->cmd_fd = -1;
++	if (ret) return ret;
++	ret = set_sock_nonblock(s->data->ssl_fd); if (ret) return ret;
++	ret = openconnect_check_peer_cert_hash(s->data, s->peer_hash); if (ret) return -EPERM;
++	ret = uv_frame(&s->packets, 0x64, s->token, 32); if (ret) return ret;
++	ret = uv_exchange(v, s->data, &s->packets, 0x64); if (ret) return ret;
++	if (s->packets.rxused != 9 || s->packets.rx[8]) return -EPERM;
++	uv_consumed(&s->packets);
++	v->aux_ssl_fd = s->data->ssl_fd;
++	monitor_fd_new(v, aux_ssl); monitor_read_fd(v, aux_ssl); monitor_except_fd(v, aux_ssl);
++	monitor_read_fd(v, ssl); monitor_except_fd(v, ssl);
++	s->started = time(NULL); s->control_due = s->started + 10; s->data_due = s->started + 15;
++	vpn_progress(v, PRG_INFO, _("UniVPN IPv4/TLS data channel connected\n"));
++	return 0;
++}
++int univpn_mainloop(struct openconnect_info *v, int *timeout, int readable)
++{
++	struct univpn_state *s = v->univpn; time_t now = time(NULL); int ret, work = 0;
++	if (!s || !s->data || v->ssl_fd < 0) goto failed;
++	/* Both sessions may have decrypted bytes even without a new socket event. */
++	for (int channel = 0; channel < 2; channel++) {
++		struct uv_channel *c = channel ? &s->packets : &s->control;
++		struct openconnect_info *tls = channel ? s->data : v;
++		for (int frames = 0; frames < 32; frames++) {
++			ret = uv_read(tls, c); if (ret < 0) goto failed;
++			if (!ret) break;
++			if (channel) {
++				if (c->rx[5] == 0x66) {
++					if (c->rxused < 36 || memcmp(c->rx + 8, "\0\0\0\0\0\0\0\0", 8) ||
++					    !uv_ipv4(c->rx + 16, c->rxused - 16)) goto failed;
++					ret = queue_new_packet(v, &v->incoming_queue, c->rx + 16, c->rxused - 16);
++					if (ret < 0) goto failed;
++				} else if (c->rx[5] != 0x65) goto failed;
++			} else if (c->rx[5] != 6) goto failed;
++			uv_consumed(c); work = 1;
++		}
++	}
++	if (!s->control.txused && ka_check_deadline(timeout, now, s->control_due)) {
++		unsigned char beat[36]; memcpy(beat, s->token, 32);
++		store_be32(beat + 32, (uint32_t)(now - s->started) * 1000);
++		uv_frame(&s->control, 6, beat, sizeof(beat)); clear_mem(beat, sizeof(beat)); s->control_due = now + 10;
++	}
++	if (!s->packets.txused && ka_check_deadline(timeout, now, s->data_due)) {
++		uv_frame(&s->packets, 0x65, NULL, 0); s->data_due = now + 15;
++	}
++	if (!s->packets.txused && v->outgoing_queue.count) {
++		struct pkt *pkt = dequeue_packet(&v->outgoing_queue);
++		if (pkt->len > 65527 || !uv_ipv4(pkt->data, pkt->len)) { free_pkt(v, pkt); goto failed; }
++		memcpy(s->packets.tx, "\xc1\x92\xa4\xd6\x01\x66", 6);
++		store_be16(s->packets.tx + 6, pkt->len + 8); memset(s->packets.tx + 8, 0, 8);
++		memcpy(s->packets.tx + 16, pkt->data, pkt->len); s->packets.txused = pkt->len + 16;
++		free_pkt(v, pkt);
++	}
++	ret = uv_write(v, &s->control); if (ret < 0) goto failed; work |= ret;
++	ret = uv_write(s->data, &s->packets); if (ret < 0) goto failed; work |= ret;
++	if (s->packets.txused) monitor_write_fd(v, aux_ssl); else unmonitor_write_fd(v, aux_ssl);
++	return work;
++failed:
++	v->quit_reason = "UniVPN channel closed or invalid frame; fresh authentication required";
++	vpn_progress(v, PRG_ERR, "%s\n", v->quit_reason);
++	return -EIO;
++}

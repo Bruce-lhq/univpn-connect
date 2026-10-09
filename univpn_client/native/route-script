@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+if [ -n "${UNIVPN_HELPER_SCRIPT:-}" ]; then
+    exec "$UNIVPN_HELPER_EXE" "$UNIVPN_HELPER_SCRIPT" --route-hook
+fi
+exec "$UNIVPN_HELPER_EXE" --route-hook

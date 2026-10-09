@@ -1,0 +1,79 @@
+From f1a5510c7ba8b6fd0efe75b9c1db0dcd3ff4b252 Mon Sep 17 00:00:00 2001
+From: UniVPN Connect contributors <contributors@example.invalid>
+Date: Fri, 9 Oct 2026 08:09:17 +0800
+Subject: [PATCH 3/4] univpn: align child TLS protocol and document validation
+ limits
+
+
+diff --git a/univpn.c b/univpn.c
+index 5809809..eb79951 100644
+--- a/univpn.c
++++ b/univpn.c
+@@ -264,6 +264,8 @@ int univpn_connect(struct openconnect_info *v)
+ 	if (s->data) return -EINVAL;
+ 	s->data = openconnect_vpninfo_new(v->useragent, uv_validate_data, NULL, NULL, uv_progress, s);
+ 	if (!s->data) return -ENOMEM;
++	ret = openconnect_set_protocol(s->data, "univpn");
++	if (ret) return ret;
+ #define COPY(field) do { if (v->field && !(s->data->field = strdup(v->field))) return -ENOMEM; } while (0)
+ 	COPY(hostname); COPY(unique_hostname); COPY(sni); COPY(cafile); COPY(ciphersuite_config);
+ #undef COPY
+diff --git a/www/huawei.xml b/www/huawei.xml
+index a0fca7c..749600f 100644
+--- a/www/huawei.xml
++++ b/www/huawei.xml
+@@ -13,9 +13,9 @@
+ investigation in <a
+ href="https://gitlab.com/openconnect/openconnect/-/issues/603">issue #603</a>.
+ They describe a subset exercised by a separate TCP forwarding prototype
+-against one authorized gateway. They do not establish compatibility with
+-all Huawei or Leagsoft firmware, and do not add a working protocol to
+-OpenConnect.</p>
++and the experimental <tt>--protocol=univpn</tt> implementation against one
++authorized gateway. They do not establish compatibility with all Huawei or
++Leagsoft firmware.</p>
+ 
+ <p>Only password authentication and IPv4 over two TLS connections were
+ exercised. Unknown fields below retain their observed values; their
+@@ -75,7 +75,10 @@ Passwords and session tokens must not be included in diagnostic reports.</p>
+ <p>Command <tt>03</tt> requests a virtual address, with the 32-byte token as
+ payload. The tested successful response begins with a zero byte. Starting
+ at payload byte 4, a type 1 TLV of length 5 contains the assigned IPv4 address
+-in its first four bytes. The fifth byte is not interpreted.</p>
++in its first four bytes and an IPv4 prefix length in the fifth. A type 6
++TLV contains a sequence of five-byte IPv4 network/prefix entries. Invalid
++prefixes and non-aligned networks are rejected. Other TLVs, including any
++possible DNS metadata, are not interpreted.</p>
+ 
+ <h2>Data connection and heartbeats</h2>
+ 
+@@ -116,9 +119,26 @@ packets to and from TUN and let the operating system handle TCP. It should
+ reuse OpenConnect's certificate validation, authentication and event-loop
+ interfaces.</p>
+ 
+-<p>Other authentication methods, firmware versions, IPv6, UDP/DTLS,
+-compression, session renewal, disconnect messages, flow control and
+-multi-hour stability remain unverified. Further redacted observations and
++<p>The native implementation carries whole IPv4 packets over TLS; it does
++not implement a userspace TCP stack. Six loopback TLS integration tests
++cover authentication, rejected credentials, certificate trust and channel
++identity binding, IPv4 TCP/UDP/ICMP echo and malformed framing. These are
++mock tests, not evidence of all those protocols on a real gateway. Live
++native probes received TCP SYN-ACK and ICMP port-unreachable in response to
++UDP; ICMP echo did not receive a reply. System TUN/routing validation remains
++separate from raw packet probes.</p>
++
++<p>Session tokens are bound to a live authenticated control channel. A
++separate <tt>--authenticate</tt> invocation followed by cookie-only startup
++is unsupported. Channel failure requires fresh authentication; no seamless
++session resumption is claimed. HTTP proxying, IPv6 and DTLS are unsupported.</p>
++
++<p>A two-hour idle SSH test of the separate minimal TCP forwarder failed to
++resume application traffic although VPN heartbeats continued. Native and
++prototype long-term stability must not be inferred from heartbeat replies.
++Other authentication methods, firmware versions, compression, session
++renewal, disconnect messages and multi-hour stability remain unverified.
++Further redacted observations and
+ an implementation following the existing
+ <a href="mitm.html">protocol investigation guidance</a> are welcome.</p>
+ 

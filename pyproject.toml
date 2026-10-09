@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "univpn-tcp-forward"
+name = "univpn-connect"
 dynamic = ["version"]
-description = "Experimental UniVPN/Huawei SSL VPN single-target TCP forwarder"
+description = "Experimental UniVPN Connect desktop, CLI and compatibility forwarder"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -13,9 +13,19 @@ readme = "README.md"
 
 [project.scripts]
 univpn-forward = "univpn_forward.cli:main"
+univpn-client = "univpn_client.cli:main"
+univpn-connect = "univpn_client.desktop:main"
+
+[project.optional-dependencies]
+client = ["keyring>=25,<26", "pywin32>=306; sys_platform == 'win32'"]
+desktop = ["keyring>=25,<26", "pywebview>=6,<7", "pywin32>=306; sys_platform == 'win32'"]
+build = ["pyinstaller>=6.12,<7"]
 
 [tool.setuptools.dynamic]
 version = {attr = "univpn_forward.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["univpn_forward*"]
+include = ["univpn_forward*", "univpn_client*"]
+
+[tool.setuptools.package-data]
+univpn_client = ["ui/*", "native/route-script", "native/route-script.js"]

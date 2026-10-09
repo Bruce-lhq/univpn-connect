@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0a1 — 2026-10-09
+
+Native client preview; not a universal VPN compatibility claim.
+
+- OpenConnect UniVPN IPv4/TLS transport, public patches and reproducible pinned source.
+- Multiple gateway profiles and secure saved accounts; shared desktop/CLI service.
+- Temporary OS authorization, explicit split routes and scoped rollback.
+- Local desktop UI with connection, profiles, accounts, logs and light/dark/system themes.
+- macOS arm64 app and native network testing; Intel Mac/Windows/Linux packaging recipes and workflows prepared separately.
+- Native loopback TLS, C parser and Python management tests; documented live and long-idle limits.
+
+
 ## 0.1.0a1 — 2026-10-09
 
 First public alpha candidate. This version is experimental and tested against one authorized gateway.

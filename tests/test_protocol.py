@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import socket
 import tempfile
@@ -84,6 +85,7 @@ class Tests(unittest.TestCase):
             self.assertIs(p.tls_connect(),tls)
         p.CERT_SHA256=None
 
+    @unittest.skipIf(os.name == 'nt', 'Unix file permissions are unavailable on Windows')
     def test_private_credentials(self):
         with tempfile.TemporaryDirectory() as d:
             f=Path(d)/'credentials.json';f.write_text(json.dumps({'username':'example','password':'test-only'}))
@@ -91,6 +93,11 @@ class Tests(unittest.TestCase):
             f.chmod(0o644)
             with self.assertRaises(ValueError):credentials(args)
             f.chmod(0o600);self.assertEqual(credentials(args),('example','test-only'))
+
+    def test_windows_rejects_unverifiable_credentials_file(self):
+        args=parser().parse_args(['--gateway','vpn.example.com','--target','10.0.0.2','--target-port','22','--credentials-file','example.json'])
+        with patch('univpn_forward.cli.os.name','nt'),self.assertRaisesRegex(ValueError,'interactive authentication'):
+            credentials(args)
 
     def test_partial_pin_rejected(self):
         with self.assertRaises(Exception):fingerprint('abcd')

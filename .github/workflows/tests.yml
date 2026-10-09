@@ -10,7 +10,7 @@ jobs:
   unittest:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ['3.9', '3.12']
     runs-on: ${{ matrix.os }}
     steps:
@@ -30,6 +30,7 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uv build
+      - run: python scripts/sanitize_archives.py dist
       - name: Verify installed wheel outside source tree
         run: |
           uv venv "$RUNNER_TEMP/package-test"

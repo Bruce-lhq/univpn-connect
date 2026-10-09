@@ -34,6 +34,7 @@ jobs:
           Path('release-notes.md').write_text(sections[0].split('\n', 1)[1].strip() + '\n')
           PY
       - run: uv build
+      - run: python scripts/sanitize_archives.py dist
       - name: Generate checksums
         run: |
           python - <<'PY'
@@ -58,5 +59,5 @@ jobs:
             flags+=(--latest)
           fi
           gh release create "$tag" dist/*.whl dist/*.tar.gz dist/SHA256SUMS \
-            --verify-tag --title "UniVPN TCP Forward $version" \
+            --verify-tag --title "UniVPN Connect $version" \
             --notes-file release-notes.md "${flags[@]}"

@@ -1,0 +1,19 @@
+From bbea373ffe5001a7b79e01fb33f634bec09f0fff Mon Sep 17 00:00:00 2001
+From: UniVPN Connect contributors <contributors@example.invalid>
+Date: Fri, 9 Oct 2026 08:28:21 +0800
+Subject: [PATCH 4/4] univpn: register control socket with epoll before
+ monitoring
+
+
+diff --git a/univpn.c b/univpn.c
+index eb79951..e907f61 100644
+--- a/univpn.c
++++ b/univpn.c
+@@ -288,6 +288,7 @@ int univpn_connect(struct openconnect_info *v)
+ 	uv_consumed(&s->packets);
+ 	v->aux_ssl_fd = s->data->ssl_fd;
+ 	monitor_fd_new(v, aux_ssl); monitor_read_fd(v, aux_ssl); monitor_except_fd(v, aux_ssl);
++	monitor_fd_new(v, ssl);
+ 	monitor_read_fd(v, ssl); monitor_except_fd(v, ssl);
+ 	s->started = time(NULL); s->control_due = s->started + 10; s->data_due = s->started + 15;
+ 	vpn_progress(v, PRG_INFO, _("UniVPN IPv4/TLS data channel connected\n"));

@@ -1,113 +1,96 @@
-# UniVPN TCP Forward
+# UniVPN Connect
 
-**0.1.0 alpha 1** · Experimental IPv4 TCP forwarding · MIT license
+An experimental desktop and CLI client for the password-authentication / IPv4-over-TLS subset observed on a UniVPN gateway. It uses a patched OpenConnect core and your operating system’s TCP/IP stack.
 
-An experimental, standard-library Python forwarder for a UniVPN/Huawei SSL VPN gateway. It exposes **one IPv4 TCP destination** on localhost, so applications such as SSH can reach that destination without a system VPN client or TUN interface.
+Save multiple gateway profiles and accounts, switch between them, inspect connection logs, and choose light, dark or system appearance. Passwords stay in the system credential store; configuration exports contain no passwords. The desktop interface follows the compact connection-and-profile organization of Shadowrocket, with original assets and styling.
 
-This is a protocol prototype, not a full VPN or an OpenConnect plugin. Compatibility has been verified against one gateway; other firmware, authentication methods and network conditions need testing. See [validation](docs/validation.md) and [protocol notes](docs/protocol.md).
+**Current version: 0.2.0 alpha 1.** One real gateway and macOS Apple Silicon have been tested. This is not a claim of compatibility with every Huawei / UniVPN product. See the [validation record](docs/validation.md) before deploying it.
 
-## Quick start
+## Install and connect
 
-Requires Python 3.9 or newer. Download the source `.tar.gz` from this repository's GitHub Releases and unpack it:
+Installer builds are prepared locally; this project has not yet been published to a new GitHub repository. Choose the package matching your machine:
 
-```sh
-tar -xzf univpn_tcp_forward-0.1.0a1.tar.gz
-cd univpn_tcp_forward-0.1.0a1
-```
+| Platform | Package | CLI |
+| --- | --- | --- |
+| macOS Apple Silicon / Intel | `.dmg`, drag UniVPN Connect to Applications | executable inside the app, or CLI archive |
+| Windows x64 | `-setup.exe` or portable `.zip` | `univpn-client.cmd` in the installed/portable folder |
+| Ubuntu 24.04 x64 / arm64 | `.deb` or portable `.tar.gz` | `univpn-client` after installing the deb |
 
-From this directory, no installation, third-party Python dependency, administrator privilege or `uv` is required.
+The macOS arm64 package is built and exercised locally. Ubuntu 24.04 arm64 packages and native mock tests were built in an isolated Linux VM on that Mac; physical Linux desktop/network tests remain pending. Intel Mac, Windows and Linux x64 workflows are prepared but not yet run on their hosts; those packages are not presented as tested downloads. Packages are not notarized or signed by a commercial publisher. macOS uses local ad-hoc signatures required to execute Apple Silicon code; this is not Apple developer signing. Follow your system’s normal approval flow, rather than disabling global security protections.
 
-```sh
-python3 -m univpn_forward \
-  --gateway vpn.example.com \
-  --target 10.0.0.2 --target-port 22 \
-  --listen-port 2222
-```
+In the app:
 
-Replace the gateway, internal destination and destination port with your own values. Enter your VPN username and password at the prompts. `READY` means the localhost listener is ready; VPN authentication happens when a client connects.
+1. Add a **gateway**: hostname, TLS port and authentication domain. Leave the domain empty to use the hostname. Add explicit IPv4 routes, for example `10.20.0.0/16` or one host’s `10.20.1.5/32`.
+2. Add an **account**: a label, VPN username and password. You may save several accounts independently of gateway profiles.
+3. Select a gateway and account, then turn on the connection switch. Approve the temporary system network helper when prompted.
+4. Connect your ordinary applications to the internal addresses. Turn off the switch to disconnect.
 
-In another terminal, connect to the destination's SSH server:
+Certificate and hostname validation are on by default. For a private CA, specify its certificate file. Alternatively use a full `pin-sha256:…` public-key pin obtained through a trusted channel. Reading a fingerprint from an unverified first connection is only trust on first use. There is no desktop “ignore all certificate errors” option.
 
-```sh
-ssh -o HostKeyAlias=10.0.0.2 -p 2222 your-user@127.0.0.1
-```
+Closing the window keeps the connection service running. **Settings → Stop service** disconnects and exits the service. Only one gateway is active at a time; disconnect before switching or deleting an active profile/account. A channel failure triggers bounded fresh-authentication retries; invalid credentials and certificate failures are not retried indefinitely.
 
-The SSH account is separate from the VPN account. `HostKeyAlias` identifies the actual destination rather than the local forwarding endpoint. Verify the destination's host key when connecting for the first time.
+## CLI
 
-Optional gateway settings:
-
-- `--gateway-port 443`: external TLS port.
-- `--domain AUTH_DOMAIN`: authentication domain; defaults to the gateway.
-- `--server-name vpn.example.com`: certificate hostname/SNI when connecting to a gateway IP.
-- `--ca-file /path/to/trusted-ca.pem`: a trusted private CA bundle.
-- `--cert-sha256 FULL_SHA256`: pin a trusted leaf certificate, instead of CA/hostname validation.
-
-TLS certificate verification is enabled by default. Obtain a private CA or certificate fingerprint through a trusted channel. A fingerprint read from an unverified first connection only provides trust on first use, not proof of server identity. `--insecure` is available explicitly for diagnostics; it is not the default connection method.
-
-## Credentials and unattended use
-
-Interactive input keeps passwords out of command arguments. For unattended use, create a private JSON file using your editor:
-
-```json
-{"username": "YOUR_VPN_USERNAME", "password": "YOUR_VPN_PASSWORD"}
-```
+The CLI shares profiles, accounts, connection state and logs with the desktop.
 
 ```sh
-chmod 600 credentials.local.json
-python3 -m univpn_forward \
-  --gateway vpn.example.com --target 10.0.0.2 --target-port 22 \
-  --credentials-file credentials.local.json
+univpn-client profiles add --name Work --host vpn.example.com --route 10.20.0.0/16
+univpn-client accounts add --name Work --username your-vpn-user
+univpn-client profiles list
+univpn-client accounts list
+univpn-client connect --profile PROFILE_ID --account ACCOUNT_ID
+univpn-client status
+univpn-client logs
+univpn-client disconnect
 ```
 
-Credential JSON files are ignored by Git. Do not publish them or protocol captures containing authentication/session data. Ordinary diagnostic logs include endpoint addresses and assigned VPN addresses, but never intentionally print passwords or session tokens.
-
-On macOS, `--keychain-service YOUR_SERVICE --keychain-account gateway` can read a generic-password Keychain item whose secret is the same JSON object. Creating that item is a separate local setup step; the tool does not change your Keychain, SSH configuration, routes or startup services.
-
-Keep the forwarder process running. SSH `ControlMaster`/`ControlPersist` can reuse an established SSH connection and avoid repeated VPN handshakes; this prototype itself authenticates a new VPN session for each accepted local TCP connection.
-
-## iSH on iPhone
-
-Download the release source archive and make it available in iSH. Install the system tools, unpack it, and run the same command:
+The account command prompts for a password; never put it in command arguments. Use `univpn-client --help` for import/export and editing commands. On macOS the same commands can use:
 
 ```sh
-apk add python3 openssh-client
-tar -xzf univpn_tcp_forward-0.1.0a1.tar.gz
-cd univpn_tcp_forward-0.1.0a1
-python3 -m univpn_forward \
-  --gateway vpn.example.com --target 10.0.0.2 --target-port 22
+"/Applications/UniVPN Connect.app/Contents/MacOS/UniVPN Connect" status
 ```
 
-In a second iSH shell, forward a remote web service to the phone:
+Linux requires GTK/WebKitGTK, a running Secret Service credential store and PolicyKit. The deb declares its runtime dependencies. Windows uses Windows Credential Manager, UAC and the bundled official Wintun driver. OS administrator authorization is separate from the VPN password.
 
-```sh
-ssh -N -o HostKeyAlias=10.0.0.2 \
-  -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-  -L 127.0.0.1:8765:127.0.0.1:8765 \
-  -p 2222 your-user@127.0.0.1
-```
+## Build from source
 
-Open `http://127.0.0.1:8765` on the phone. The remote service must already listen on port 8765. iOS can suspend iSH; background lifetime depends on the device and iSH. The packaged version has not yet been tested on a physical iPhone, although the predecessor script was used there.
-
-## Scope and limitations
-
-- IPv4 TCP, one destination per forwarder process; no UDP, IPv6, DNS tunnel or system-wide routing.
-- Password authentication as observed on one gateway; no MFA, browser SSO or certificate authentication.
-- Two TLS channels per VPN session, with control/data heartbeats.
-- The user-space TCP implementation is minimal: it is not a complete TCP stack and lacks general retransmission, out-of-order buffering and comprehensive sequence-wrap handling. Bulk-transfer and idle tests do not establish reliability on every network.
-- Local clients share the configured VPN credentials. Only loopback binding is supported; other local processes can still connect.
-- Linux/iSH use the portable Python code; only macOS live network testing is recorded so far. Windows compatibility is not claimed.
-
-For a complete VPN implementation, see the [OpenConnect contribution plan](docs/openconnect.md). This prototype is useful as protocol documentation and interoperability evidence, rather than a Python patch directly mergeable into OpenConnect's C codebase.
-
-## Development
+Requires Python 3.9+ for the Python source, Python 3.12 for the provided desktop build recipes, Node for JavaScript syntax checks, and the native development tools described in [building](docs/building.md). A Python wheel alone does not contain the OpenConnect binary or produce a working VPN connection.
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m univpn_forward --help
+node --check univpn_client/ui/app.js
+python3 scripts/prepare_native.py
 ```
 
-The included GitHub Actions workflow runs these tests on macOS and Linux with Python 3.9 and 3.12. A successful CI run tests code without contacting any private VPN gateway.
+Use the platform recipe to build and stage OpenConnect, then:
 
-MIT license. No official vendor binaries, gateway configuration, credentials or captured sessions are included.
+```sh
+uv pip install '.[desktop,build]'
+python3 scripts/dependency_sources.py
+python3 scripts/build_desktop.py
+python3 scripts/package_desktop.py
+```
 
-See [contribution guidelines](CONTRIBUTING.md), [changelog](CHANGELOG.md), and [release procedure](docs/releasing.md).
+`uv` is only a build-time dependency manager here. Users of desktop/CLI bundles do not need Python or uv. The original zero-dependency [TCP compatibility forwarder](docs/compatibility-forwarder.md) remains available, including an iSH example; it does not provide native VPN routing and has a documented long-idle failure.
+
+## Architecture and scope
+
+```text
+Desktop / CLI → authenticated local IPC → user connection service
+                                        → temporary OS-authorized helper
+                                        → patched OpenConnect → TLS gateway
+                                        → OS utun / TUN / Wintun + explicit routes
+```
+
+The user service owns configuration and system-keychain access. The privileged helper receives one validated job through private IPC, owns its native process and route session, and cleans up on disconnect or IPC loss. Passwords travel through protected IPC and the native process’s stdin, not command arguments or exported JSON. The local WebView loads bundled assets; it has no password-reading API and no privileged HTTP API.
+
+The current native implementation supports IPv4 over two TLS channels and explicit split routes. It intentionally does not modify global DNS or default routes. IPv6, DTLS, MFA, browser SSO, compression, universal firmware support and seamless session renewal are not implemented. Cookie-only startup after a separate `--authenticate` invocation is unsupported because the observed session token is bound to a live control channel. Multiple accounts do not mean multiple simultaneous VPN connections.
+
+## Development and contribution
+
+- [Five-stage design](docs/design.md) and [implementation plan](docs/implementation.md)
+- [Protocol observations](docs/protocol.md), [validation](docs/validation.md) and [native build recipes](docs/building.md)
+- [OpenConnect contribution preparation](docs/openconnect.md)
+- [Release preparation](docs/releasing.md) and [changelog](CHANGELOG.md)
+
+The management/desktop code is MIT licensed. The modified OpenConnect core retains LGPL-2.1 terms; bundled dependencies retain their own licenses. See [third-party notices](THIRD_PARTY_NOTICES.md). Matching source and public patches accompany native releases; the native executable and libopenconnect remain separate and replaceable.

@@ -1,0 +1,175 @@
+From 055a2b1a325eb3ecf0867e83dee3bc29a2d83c10 Mon Sep 17 00:00:00 2001
+From: Prepared Contribution <contributors@example.invalid>
+Date: Fri, 9 Oct 2026 00:24:12 +0800
+Subject: [PATCH 1/4] www: document initial Huawei/UniVPN protocol observations
+
+Add a contributor-facing protocol investigation page covering the observed password authentication, IPv4 framing and control/data heartbeat sequence. Link it from New Protocols without advertising a supported OpenConnect protocol.
+
+Keep unknown fields and the limits of one-gateway testing explicit. This documentation does not add a C implementation.
+
+Validation: xmllint, upstream html.py rendering, internal links and git diff --check.
+
+Related-to: https://gitlab.com/openconnect/openconnect/-/issues/603
+
+diff --git a/www/Makefile.am b/www/Makefile.am
+index ca4f4f2..84685ed 100644
+--- a/www/Makefile.am
++++ b/www/Makefile.am
+@@ -7,7 +7,7 @@ FTR_PAGES = csd.html charset.html token.html pkcs11.html tpm.html features.html
+ START_PAGES = building.html connecting.html manual.html vpnc-script.html
+ INDEX_PAGES = changelog.html download.html index.html packages.html platforms.html licence.html
+ PROTO_PAGES = protocols.html anyconnect.html array.html fortinet.html f5.html globalprotect.html juniper.html pulse.html
+-CONTR_PAGES = contribute.html mitm.html
++CONTR_PAGES = contribute.html mitm.html huawei.html
+ TOPLEVEL_PAGES = mail.html
+ 
+ ALL_PAGES = $(FTR_PAGES) $(START_PAGES) $(INDEX_PAGES) $(TOPLEVEL_PAGES) $(PROTO_PAGES) $(CONTR_PAGES)
+diff --git a/www/contribute.xml b/www/contribute.xml
+index d8c6237..a1d5ff5 100644
+--- a/www/contribute.xml
++++ b/www/contribute.xml
+@@ -126,6 +126,12 @@ the <tt>New Protocol</tt> tag</a>.</p>
+ perhaps even Google Summer of Code projects.</p>
+ 
+ <ul>
++  <li><b>Huawei / UniVPN SSL VPN.</b><br/>
++  Initial <a href="huawei.html">protocol observations</a> cover password
++  authentication, IPv4 framing and control/data heartbeats on one gateway.
++  See <a href="https://gitlab.com/openconnect/openconnect/-/issues/603">issue #603</a>.
++  These notes are a starting point for an implementation, not a supported
++  OpenConnect protocol.</li>
+   <li><b><a href="https://www.checkpoint.com/products/endpoint-remote-access-vpn-software-blade/">CheckPoint VPN</a></b><br/>
+   This is an IPSec-based VPN with fallback to using the SSL transport. Some discussion of OpenConnect support in this <a href="https://gitlab.com/openconnect/openconnect/issues/13">GitLab ticket</a>,
+   and working code contributed in <a href="https://gitlab.com/openconnect/openconnect/-/merge_requests/207">MR !207</a>.</li>
+diff --git a/www/huawei.xml b/www/huawei.xml
+new file mode 100644
+index 0000000..a0fca7c
+--- /dev/null
++++ b/www/huawei.xml
+@@ -0,0 +1,126 @@
++<PAGE>
++	<INCLUDE file="inc/header.tmpl" />
++
++	<VAR match="VAR_SEL_CONTRIBUTE" replace="selected" />
++	<PARSE file="menu1.xml" />
++	<PARSE file="menu2-contribute.xml" />
++
++	<INCLUDE file="inc/content.tmpl" />
++
++<h1>Huawei / UniVPN protocol observations</h1>
++
++<p>These are initial observations for the Huawei / UniVPN SSL VPN
++investigation in <a
++href="https://gitlab.com/openconnect/openconnect/-/issues/603">issue #603</a>.
++They describe a subset exercised by a separate TCP forwarding prototype
++against one authorized gateway. They do not establish compatibility with
++all Huawei or Leagsoft firmware, and do not add a working protocol to
++OpenConnect.</p>
++
++<p>Only password authentication and IPv4 over two TLS connections were
++exercised. Unknown fields below retain their observed values; their
++semantics have not been established. Integers are in network byte order.</p>
++
++<h2>Framing</h2>
++
++<p>Following the initial request, both TLS channels use an eight-byte
++header followed by the indicated payload:</p>
++
++<table>
++<tr><th>Offset</th><th>Length</th><th>Observed field</th></tr>
++<tr><td>0</td><td>4</td><td>Magic <tt>c1 92 a4 d6</tt></td></tr>
++<tr><td>4</td><td>1</td><td>Version <tt>01</tt></td></tr>
++<tr><td>5</td><td>1</td><td>Command</td></tr>
++<tr><td>6</td><td>2</td><td>Payload length, excluding header</td></tr>
++<tr><td>8</td><td>variable</td><td>Payload</td></tr>
++</table>
++
++<p>TLVs consist of a two-byte type, a two-byte length and that many value
++bytes. An interrupted or partial TLS read must retain the current frame,
++including when a timeout occurs immediately after its header. A new TLS
++record does not necessarily begin a new protocol frame.</p>
++
++<h2>Control connection</h2>
++
++<p>The initial request is 340 bytes:</p>
++
++<pre>
++fe fc ef be c1 92 a4 d6 00 00 00 00 00 1d 01 44
++[64 zero bytes]
++[authentication domain, UTF-8, zero-padded to 256 bytes]
++00 01 00 00
++</pre>
++
++<p>The prototype requires a framed command <tt>00</tt> reply whose payload
++is four zero bytes. It then sends command <tt>01</tt> with a 256-byte padded
++domain, four zero bytes and the following TLVs:</p>
++
++<table>
++<tr><th>Type</th><th>Value</th></tr>
++<tr><td>1</td><td>Username, escaped and NUL-terminated</td></tr>
++<tr><td>2</td><td>Password, escaped and NUL-terminated</td></tr>
++<tr><td>3</td><td>Client MAC string, such as <tt>0200-0000-0001</tt></td></tr>
++</table>
++
++<p>The observed escaping replaces <tt>%</tt>, <tt>&amp;</tt> and <tt>+</tt>
++with <tt>%25</tt>, <tt>%26</tt> and <tt>%2B</tt>, respectively. The
++prototype uses a deterministic locally administered MAC value; requirements
++for that field on other gateways are unknown.</p>
++
++<p>A successful command <tt>01</tt> response begins with a four-byte zero
++result. TLVs begin at byte 8 of the response payload; the first 32 bytes of
++type 3 supply a session token. The intervening four bytes are not interpreted.
++Passwords and session tokens must not be included in diagnostic reports.</p>
++
++<p>Command <tt>03</tt> requests a virtual address, with the 32-byte token as
++payload. The tested successful response begins with a zero byte. Starting
++at payload byte 4, a type 1 TLV of length 5 contains the assigned IPv4 address
++in its first four bytes. The fifth byte is not interpreted.</p>
++
++<h2>Data connection and heartbeats</h2>
++
++<p>A second TLS connection sends command <tt>64</tt> with the session token.
++The tested response has command <tt>64</tt> and one zero payload byte.</p>
++
++<table>
++<tr><th>Channel</th><th>Command</th><th>Payload</th><th>Prototype interval</th></tr>
++<tr><td>Control</td><td><tt>06</tt></td><td>32-byte token followed by a
++four-byte elapsed-millisecond counter</td><td>10 seconds</td></tr>
++<tr><td>Data</td><td><tt>65</tt></td><td>Empty</td><td>15 seconds</td></tr>
++<tr><td>Data</td><td><tt>66</tt></td><td>Eight zero bytes followed by an
++IPv4 packet</td><td>As needed</td></tr>
++</table>
++
++<p>The millisecond counter is measured since session setup and truncated
++to 32 bits. The prototype reads control replies while data is idle, and
++serializes heartbeat and packet writes on each TLS channel. Reply semantics
++and whether the server requires these exact intervals need further study.</p>
++
++<h2>Interoperability evidence and remaining work</h2>
++
++<p>On macOS, a fresh SSH connection through the prototype, binary transfers
++of 256 KiB in each direction, a 65-second idle SSH connection and a concurrent
++second connection passed. SSH host-key verification remained enabled and
++existing SSH multiplexed connections were not reused. A wrong TLS certificate
++pin was rejected before VPN authentication.</p>
++
++<p>The gateway certificate did not chain to the system CA store. The live
++test used a first-observed full SHA-256 certificate pin; no independent
++verification of that initial certificate identity is claimed. A production
++implementation must use normal certificate validation or a pin obtained
++through a trusted channel.</p>
++
++<p>The prototype constructs a minimal IPv4/TCP flow, not a complete TCP
++stack. An OpenConnect implementation should instead pass complete IPv4
++packets to and from TUN and let the operating system handle TCP. It should
++reuse OpenConnect's certificate validation, authentication and event-loop
++interfaces.</p>
++
++<p>Other authentication methods, firmware versions, IPv6, UDP/DTLS,
++compression, session renewal, disconnect messages, flow control and
++multi-hour stability remain unverified. Further redacted observations and
++an implementation following the existing
++<a href="mitm.html">protocol investigation guidance</a> are welcome.</p>
++
++	<INCLUDE file="inc/footer.tmpl" />
++</PAGE>

@@ -10,3 +10,11 @@ credentials*.json
 *.log
 .DS_Store
 docs/superpowers/
+
+# Compiled native payloads belong to release artifacts, not source control.
+univpn_client/native/openconnect
+univpn_client/native/openconnect.exe
+univpn_client/native/*.dylib
+univpn_client/native/*.dll
+univpn_client/native/*.so*
+univpn_client/native/ca-bundle.pem

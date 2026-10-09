@@ -1,0 +1,11 @@
+{
+  "commit": "70d1e79d1e55849dfc71dcc199b1edb535b547e4",
+  "url": "https://gitlab.com/openconnect/openconnect/-/archive/70d1e79d1e55849dfc71dcc199b1edb535b547e4/openconnect-70d1e79d1e55849dfc71dcc199b1edb535b547e4.tar.gz",
+  "sha256": "c193f6f0f197bf4cdcc15d74c8803f9073406ddcd2f4d4ce8455ee1f76dcb72f",
+  "patches": [
+    "0001-www-document-initial-Huawei-UniVPN-protocol-observat.patch",
+    "0002-univpn-add-experimental-dual-TLS-IPv4-transport-and-.patch",
+    "0003-univpn-align-child-TLS-protocol-and-document-validat.patch",
+    "0004-univpn-register-control-socket-with-epoll-before-mon.patch"
+  ]
+}

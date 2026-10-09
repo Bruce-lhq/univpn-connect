@@ -1,17 +1,37 @@
-# Contributing to OpenConnect
+# OpenConnect contribution preparation
 
-The upstream tracker already contains [Huawei SSL VPN issue #603](https://gitlab.com/openconnect/openconnect/-/issues/603). It received maintainer responses identifying the Huawei/Leagsoft UniVPN relationship and inviting protocol investigation and review. Huawei is absent from the published [supported protocol list](https://www.infradead.org/openconnect/protocols.html) at the time this project was prepared.
+The local `feature/univpn-native` branch now contains an experimental native
+IPv4/TLS implementation, rather than a Python forwarder proposed as a C
+patch. The pinned upstream base is recorded in
+`native/openconnect/upstream.json`; four unsigned public patches cover the
+protocol report, implementation/tests, and channel-protocol/documentation
+follow-up, and Linux epoll registration fix. `scripts/prepare_native.py` verifies the official source archive
+and applies them in order.
 
-This repository is a standalone TCP prototype. A useful first upstream contribution is a concise protocol report, test results and a link to this public source, with no private endpoints or authentication/session captures. Publishing or posting that report is a separate action; preparing this repository does not submit anything upstream.
+The upstream [Huawei SSL VPN issue #603](https://gitlab.com/openconnect/openconnect/-/issues/603)
+received maintainer replies relating Huawei and Leagsoft UniVPN and inviting
+protocol investigation. Existing maintainer interest does not mean this
+implementation has been reviewed or accepted.
 
-A mergeable implementation would require work in OpenConnect's C architecture:
+The implementation uses OpenConnect TLS validation, authentication forms,
+TUN queues and the event loop. It adds a second monitored TLS connection and
+retains framing/write state across partial I/O. Six local TLS gateway tests
+and four C tests were run on macOS; sanitizers and live probes are documented
+in [validation](validation.md). Native system routing and other-host results
+must be stated separately from mock results. IPv6, DTLS, MFA, SSO, HTTP proxy
+and cross-process cookie-only startup remain unsupported.
 
-1. Validate the framing/login notes with maintainers and additional gateway observations.
-2. Implement control/data TLS sessions using upstream's TLS/authentication interfaces.
-3. Transfer IPv4 packets through the existing TUN/event-loop machinery. Reuse the kernel TCP stack rather than this prototype's synthesized TCP connections.
-4. Implement lifecycle, cancellation, reconnect and keepalive behavior, then add reproducible tests and authorized live interoperability checks.
-5. Describe precisely which firmware and authentication modes were tested; leave unimplemented modes explicit.
+Prepared submission title: **univpn: add experimental dual-TLS IPv4 transport**.
+Use a draft MR until gateway coverage and upstream architecture questions are
+resolved. The submission package must include the base revision, patches,
+reproduction commands, honest evidence/limits and licensing details.
 
-Follow the upstream [contribution instructions](https://www.infradead.org/openconnect/contribute.html) and [protocol investigation guidance](https://www.infradead.org/openconnect/mitm.html). OpenConnect uses LGPL 2.1 and requires developer sign-off; new upstream code must satisfy its licensing and DCO requirements. This standalone repository uses MIT. A standalone release is not evidence that a complete upstream VPN adapter is ready.
+Follow the upstream [contribution instructions](https://www.infradead.org/openconnect/contribute.html)
+and [protocol investigation guidance](https://www.infradead.org/openconnect/mitm.html).
+OpenConnect retains LGPL-2.1 licensing. Developer Certificate of
+Origin sign-off requires the contributor’s own confirmed public identity
+and certification; the neutral preparation commits are intentionally
+unsigned and must not be submitted as fabricated sign-offs.
 
-Suggested upstream report title: **Huawei/UniVPN SSL transport: password login, IPv4 framing and heartbeat observations**.
+No GitLab account, fork, issue comment, email or MR is created by this local
+preparation. Those are explicit later publication actions.

@@ -10,6 +10,6 @@ Keep changes focused and include a regression test for framing, packet handling 
 
 Never attach usernames, passwords, certificate private keys, session tokens, private endpoint addresses or raw authentication captures. Diagnostic logs contain endpoint/virtual addresses and must be reviewed and redacted before sharing.
 
-All contributions to this standalone project are under the MIT license. Full OpenConnect support is separate work in upstream's C codebase, governed by upstream's license and DCO; see [the upstream contribution notes](docs/openconnect.md).
+Management/desktop contributions use the MIT license. OpenConnect patches retain upstream LGPL-2.1 terms and DCO requirements; see [the upstream contribution notes](docs/openconnect.md).
 
 Build distributions with `uv build` if packaging changes. Runtime use does not require uv. GitHub Releases are prereleases while the version includes an alpha, beta or release-candidate suffix. See [releasing](docs/releasing.md).
