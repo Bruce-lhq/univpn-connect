@@ -14,9 +14,7 @@ sh autogen.sh
 make -j4 P11KIT_LIBS=
 case "$(uname -s)" in
     MINGW*|MSYS*) ;; # Windows integration needs its real socket/TUN environment.
-    *) # The integration harness belongs to this repository, while this script runs
-       # inside the extracted upstream tree.
-       python3 ../../tests/univpn-integration.py ./openconnect
+    *) python3 tests/univpn-integration.py ./openconnect
        make -C tests univpn-codec buftest seqtest lzstest
        ./tests/univpn-codec && ./tests/buftest && ./tests/seqtest && ./tests/lzstest ;;
 esac
