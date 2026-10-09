@@ -62,8 +62,11 @@ def main():
         if not args.wintun or not args.wintun_license:parser.error('Windows builds require the official Wintun DLL and license')
         shutil.copy2(args.wintun,target/'wintun.dll');shutil.copy2(args.wintun_license,licenses/'Wintun-LICENSE.txt')
         copied[args.wintun.resolve()]='wintun.dll'
-        bundle=native_bin.parent/'ssl/cert.pem'
-        if not bundle.is_file():raise RuntimeError('Missing Windows CA certificate bundle')
+        bundles=(native_bin.parent/'ssl/cert.pem',
+                 native_bin.parent/'etc/ssl/certs/ca-bundle.crt',
+                 native_bin.parent/'etc/pki/tls/certs/ca-bundle.crt')
+        bundle=next((path for path in bundles if path.is_file()),None)
+        if bundle is None:raise RuntimeError('Missing Windows CA certificate bundle')
         shutil.copy2(bundle,target/'ca-bundle.pem');copied[bundle]='ca-bundle.pem'
         for directory in (native_bin.parent/'share/licenses').iterdir():
             if directory.is_dir():shutil.copytree(directory,licenses/directory.name,dirs_exist_ok=True)
