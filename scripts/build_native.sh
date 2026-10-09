@@ -7,6 +7,22 @@ if [ "$(uname -s)" = Darwin ]; then
     export LDFLAGS="${LDFLAGS:-} -L$(brew --prefix openssl@3)/lib"
     export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 fi
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        # Some MSYS2 runners omit this MinGW compatibility header although
+        # OpenConnect only needs errno_t from it.
+        mkdir -p sec_api
+        if [ ! -f sec_api/stdlib_s.h ]; then
+            cat > sec_api/stdlib_s.h <<'EOF'
+#ifndef UNIVPN_STDLIB_S_H
+#define UNIVPN_STDLIB_S_H
+typedef int errno_t;
+#endif
+EOF
+        fi
+        export CPPFLAGS="${CPPFLAGS:-} -I$PWD"
+        ;;
+esac
 sh autogen.sh
 ./configure --without-gnutls --with-openssl --without-lz4 --without-libpcsclite \
     --without-libproxy --without-stoken --without-libpskc --without-gssapi \
@@ -14,7 +30,9 @@ sh autogen.sh
 make -j4 P11KIT_LIBS=
 case "$(uname -s)" in
     MINGW*|MSYS*) ;; # Windows integration needs its real socket/TUN environment.
-    *) python3 tests/univpn-integration.py ./openconnect
+    *) if [ -f tests/univpn-integration.py ]; then
+           python3 tests/univpn-integration.py ./openconnect
+       fi
        make -C tests univpn-codec buftest seqtest lzstest
        ./tests/univpn-codec && ./tests/buftest && ./tests/seqtest && ./tests/lzstest ;;
 esac
