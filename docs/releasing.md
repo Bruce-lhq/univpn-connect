@@ -1,6 +1,6 @@
 # Releasing
 
-The version source is `univpn_forward/__init__.py`. Package metadata reads it dynamically; the tag must be `v` followed by exactly that version. Current release candidate: `v0.2.0a1`.
+The version source is `univpn_forward/__init__.py`. Package metadata reads it dynamically; the tag must be `v` followed by exactly that version. Current release: `v0.2.0`.
 
 ## Local verification
 
@@ -17,8 +17,8 @@ Create the public repository and add its SSH URL as `origin`. Push the reviewed 
 
 ```sh
 git push -u origin main
-git tag v0.2.0a1
-git push origin v0.2.0a1
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow reruns tests, checks tag/version equality, builds distributions, verifies the installed wheel from outside the source directory, and attaches the wheel, source archive and `SHA256SUMS` to a GitHub Release. The workflow classifies alpha/beta/rc versions as prereleases. It uses the matching version section of `CHANGELOG.md` for release notes and marks stable releases as latest.

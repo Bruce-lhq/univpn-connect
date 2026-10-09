@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0a1 — 2026-10-09
+## 0.2.0 — 2026-10-09
 
 Native client preview; not a universal VPN compatibility claim.
 
