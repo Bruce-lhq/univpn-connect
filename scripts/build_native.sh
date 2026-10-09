@@ -33,6 +33,10 @@ case "$(uname -s)" in
     *) if [ -f tests/univpn-integration.py ]; then
            python3 tests/univpn-integration.py ./openconnect
        fi
-       make -C tests univpn-codec buftest seqtest lzstest
-       ./tests/univpn-codec && ./tests/buftest && ./tests/seqtest && ./tests/lzstest ;;
+       if [ -f tests/univpn-codec.c ]; then
+           ${CC:-cc} -I. tests/univpn-codec.c -o tests/univpn-codec
+           ./tests/univpn-codec
+       fi
+       make -C tests buftest seqtest lzstest
+       ./tests/buftest && ./tests/seqtest && ./tests/lzstest ;;
 esac

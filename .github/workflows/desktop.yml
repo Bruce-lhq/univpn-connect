@@ -45,7 +45,7 @@ jobs:
             mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
             mingw-w64-x86_64-headers
             mingw-w64-x86_64-libxml2 mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-ca-certificates
+            mingw-w64-x86_64-ca-certificates jq
       - name: Build and test Unix native core
         if: runner.os != 'Windows'
         shell: bash
