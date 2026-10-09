@@ -57,9 +57,9 @@ def main():
              '--hidden-import','univpn_client.daemon','--hidden-import','univpn_client.helper',
              '--hidden-import','univpn_client.windows_security']
     if sys.platform=='darwin':
-        command+=['--windowed','--osx-bundle-identifier','org.univpn-connect.desktop']
+        command+=['--icon',str(ROOT/'univpn_client/ui/app-icon.icns'),'--windowed','--osx-bundle-identifier','org.univpn-connect.desktop']
     elif sys.platform=='win32':
-        command+=['--collect-all','win32ctypes','--hidden-import','win32security',
+        command+=['--icon',str(ROOT/'univpn_client/ui/app-icon.ico'),'--collect-all','win32ctypes','--hidden-import','win32security',
                   '--hidden-import','win32file','--hidden-import','pywintypes']
     subprocess.run(command+[str(ROOT/'univpn_client/launcher.py')],cwd=ROOT,check=True)
     if sys.platform=='darwin':

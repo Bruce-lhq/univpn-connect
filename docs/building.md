@@ -106,3 +106,11 @@ It retrieves the exact installed PyObjC/PyGObject/pycairo source distributions
 from PyPI with SHA256 verification, includes notices and records source hashes.
 Keep these source assets beside releases. Linux packaging excludes copied
 system GTK/WebKit shared libraries and typelibs; install the deb dependencies.
+
+## Shared icon
+
+The flat U mark in `univpn_client/ui/app-icon.svg` is the source for the
+desktop and application header. PNG, ICO and ICNS exports are committed so
+platform builds need no image tooling. To regenerate them, run
+`scripts/build_icons.py` in a separate build environment with cairosvg and
+Pillow installed; neither is a runtime dependency.

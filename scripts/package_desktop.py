@@ -41,7 +41,7 @@ def main():
             for path in executable.rglob('*'):
                 if path.is_file():archive.write(path,Path('univpn-connect')/path.relative_to(executable))
         subprocess.run(['makensis','/DSOURCE='+str(executable),'/DOUTPUT='+str(release/(name+'-setup.exe')),
-                        '/DVERSION='+__version__,str(ROOT/'packaging/windows.nsi')],check=True)
+                        '/DVERSION='+__version__,'/DICON='+str(ROOT/'univpn_client/ui/app-icon.ico'),str(ROOT/'packaging/windows.nsi')],check=True)
     else:
         with tarfile.open(release/(name+'-portable.tar.gz'),'w:gz') as archive:
             archive.add(executable,arcname='univpn-connect',filter=neutral_member)
@@ -54,7 +54,9 @@ def main():
             wrapper=deb/'usr/bin'/command
             wrapper.write_text('#!/bin/sh\nexec "/opt/univpn-connect/UniVPN Connect" '+args+' "$@"\n');wrapper.chmod(0o755)
         applications=deb/'usr/share/applications';applications.mkdir(parents=True,exist_ok=True)
-        (applications/'univpn-connect.desktop').write_text('[Desktop Entry]\nType=Application\nName=UniVPN Connect\nExec=univpn-connect\nTerminal=false\nCategories=Network;\n')
+        (applications/'univpn-connect.desktop').write_text('[Desktop Entry]\nType=Application\nName=UniVPN Connect\nExec=univpn-connect\nIcon=univpn-connect\nTerminal=false\nCategories=Network;\n')
+        icons=deb/'usr/share/icons/hicolor/512x512/apps';icons.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(ROOT/'univpn_client/ui/app-icon-512.png',icons/'univpn-connect.png')
         metadata=deb/'DEBIAN';metadata.mkdir(exist_ok=True)
         arch={'x86_64':'amd64','aarch64':'arm64'}.get(machine,machine)
         (metadata/'control').write_text('Package: univpn-connect\nVersion: '+__version__.replace('a','~alpha')+

@@ -1,6 +1,8 @@
 Unicode true
 !include "MUI2.nsh"
 Name "UniVPN Connect"
+!define MUI_ICON "${ICON}"
+!define MUI_UNICON "${ICON}"
 OutFile "${OUTPUT}"
 InstallDir "$PROGRAMFILES64\UniVPN Connect"
 RequestExecutionLevel admin
@@ -14,7 +16,7 @@ Section "Client"
   File /r "${SOURCE}\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\UniVPN Connect"
-  CreateShortcut "$SMPROGRAMS\UniVPN Connect\UniVPN Connect.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\UniVPN Connect.vbs"'
+  CreateShortcut "$SMPROGRAMS\UniVPN Connect\UniVPN Connect.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\UniVPN Connect.vbs"' "$INSTDIR\UniVPN Connect.exe" 0
   CreateShortcut "$SMPROGRAMS\UniVPN Connect\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\UniVPNConnect" "DisplayName" "UniVPN Connect"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\UniVPNConnect" "DisplayVersion" "${VERSION}"
