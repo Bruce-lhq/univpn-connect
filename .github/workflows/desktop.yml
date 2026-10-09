@@ -78,7 +78,12 @@ jobs:
           Add-Content $env:GITHUB_PATH 'C:\Program Files (x86)\NSIS'
       - name: Stage Windows core
         if: runner.os == 'Windows'
-        run: python scripts/stage_other_core.py --source build/openconnect --openssl-license build/OpenSSL-LICENSE.txt --wintun build/wintun/wintun/bin/amd64/wintun.dll --wintun-license build/wintun/wintun/COPYING
+        shell: pwsh
+        run: |
+          $objdump = Get-ChildItem -Path 'C:\msys64','D:\a\_temp' -Filter objdump.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $objdump) { throw 'MinGW objdump.exe was not found' }
+          $env:UNIVPN_MINGW_BIN = $objdump.DirectoryName
+          python scripts/stage_other_core.py --source build/openconnect --openssl-license build/OpenSSL-LICENSE.txt --wintun build/wintun/wintun/bin/amd64/wintun.dll --wintun-license build/wintun/wintun/COPYING
       - name: Install desktop build dependencies
         run: uv pip install --system '.[desktop,build]'
       - name: Install Linux GTK bridge
