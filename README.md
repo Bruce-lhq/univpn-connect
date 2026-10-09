@@ -1,5 +1,8 @@
 # UniVPN Connect
 
+[![CI](https://github.com/Bruce-lhq/univpn-connect/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Bruce-lhq/univpn-connect/actions/workflows/tests.yml)
+[![Desktop builds](https://github.com/Bruce-lhq/univpn-connect/actions/workflows/desktop.yml/badge.svg?branch=main)](https://github.com/Bruce-lhq/univpn-connect/actions/workflows/desktop.yml)
+
 An experimental desktop and CLI client for the password-authentication / IPv4-over-TLS subset observed on a UniVPN gateway. It uses a patched OpenConnect core and your operating system’s TCP/IP stack.
 
 Save multiple gateway profiles and accounts, switch between them, inspect connection logs, and choose light, dark or system appearance. Passwords stay in the system credential store; configuration exports contain no passwords. The desktop interface follows the compact connection-and-profile organization of Shadowrocket, with original assets and styling.
