@@ -42,7 +42,7 @@ jobs:
           update: true
           install: >-
             base-devel autoconf automake libtool make pkgconf
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils mingw-w64-x86_64-openssl
             mingw-w64-x86_64-headers
             mingw-w64-x86_64-libxml2 mingw-w64-x86_64-zlib
             mingw-w64-x86_64-ca-certificates jq
